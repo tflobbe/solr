@@ -462,12 +462,40 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
     }
   }
 
-  public void testFieldStatisticsResultsStringField() {
-    String f = "active_s";
+  public void testSortableTextFieldNotSupportedWithoutDocValues() {
+    SolrCore core = h.getCore();
 
+    SchemaField nonDvSortableTextField = core.getLatestSchema().getField("val_stxt_s_nodv");
+    assertFalse(
+        "schema no longer satisfies test requirements: foo_ss no longer multivalued",
+        nonDvSortableTextField.hasDocValues());
+    assertQEx(
+        "Expecting exception. The field configuration is not supported",
+        "are only supported with docValues enabled",
+        req(
+            "q",
+            "*:*",
+            "rows",
+            "0",
+            StatsParams.STATS_FIELD,
+            nonDvSortableTextField.getName(),
+            StatsParams.STATS,
+            "true"),
+        ErrorCode.BAD_REQUEST);
+  }
+
+  public void testFieldStatisticsResultsStringField() {
+    doTestFieldStatisticsResultsStringField("active_s");
+  }
+
+  public void testFieldStatisticsResultsSortableTextField() {
+    doTestFieldStatisticsResultsStringField("val_stxt_s_dv");
+  }
+
+  private void doTestFieldStatisticsResultsStringField(String f) {
     assertU(adoc("id", "1", f, "string1"));
     assertU(adoc("id", "2", f, "string2"));
-    assertU(adoc("id", "3", f, "string3"));
+    assertU(adoc("id", "3", f, "string3 with spaces"));
     assertU(adoc("id", "4"));
     assertU(commit());
 
@@ -500,7 +528,7 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
           "test string statistics values",
           req(baseParams, "q", "*:*", "rows", "0"),
           "//str[@name='min'][.='string1']",
-          "//str[@name='max'][.='string3']",
+          "//str[@name='max'][.='string3 with spaces']",
           "//long[@name='count'][.='3']",
           "//long[@name='missing'][.='1']",
           "//long[@name='countDistinct'][.='3']",
@@ -518,6 +546,9 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
           req(baseParams, "q", "*:*", "rows", "0"),
           "//long[@name='cardinality'][.='3']");
     }
+
+    assertU(adoc("id", "3", f, "string3"));
+    assertU(commit());
 
     String strFunc = "strdist(\"string22\"," + f + ",edit)";
     // stats over a string function
@@ -936,6 +967,15 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
   }
 
   public void testFieldStatisticsResultsStringFieldAlwaysMissing() {
+    doTestFieldStatisticsResultsAlphanumericFieldAlwaysMissing("active_s");
+  }
+
+  public void testFieldStatisticsResultsSortableTextFieldAlwaysMissing() {
+    doTestFieldStatisticsResultsAlphanumericFieldAlwaysMissing("val_stxt_s_dv");
+  }
+
+  private void doTestFieldStatisticsResultsAlphanumericFieldAlwaysMissing(
+      String alphaNumericFieldName) {
     SolrCore core = h.getCore();
     assertU(adoc("id", "1"));
     assertU(adoc("id", "2"));
@@ -947,24 +987,30 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
     Map<String, String> args = new HashMap<>();
     args.put(CommonParams.Q, "*:*");
     args.put(StatsParams.STATS, "true");
-    args.put(StatsParams.STATS_FIELD, "active_s");
+    args.put(StatsParams.STATS_FIELD, alphaNumericFieldName);
     args.put("indent", "true");
     SolrQueryRequest req = new LocalSolrQueryRequest(core, new MapSolrParams(args));
 
     assertQ(
         "test string statistics values",
         req,
-        "//lst[@name='active_s']/long[@name='count'][.='0']",
-        "//lst[@name='active_s']/long[@name='missing'][.='4']",
-        "//lst[@name='active_s']/null[@name='min']",
-        "//lst[@name='active_s']/null[@name='max']",
+        "//lst[@name='" + alphaNumericFieldName + "']/long[@name='count'][.='0']",
+        "//lst[@name='" + alphaNumericFieldName + "']/long[@name='missing'][.='4']",
+        "//lst[@name='" + alphaNumericFieldName + "']/null[@name='min']",
+        "//lst[@name='" + alphaNumericFieldName + "']/null[@name='max']",
         // if new stats are supported, this will break - update test to assert values for each
-        "count(//lst[@name='active_s']/*)=4");
+        "count(//lst[@name='" + alphaNumericFieldName + "']/*)=4");
 
     assertQ(
         "test string statistics values",
-        req("q", "*:*", "stats", "true", "stats.field", "{!cardinality=true}active_s"),
-        "//lst[@name='active_s']/long[@name='cardinality'][.='0']");
+        req(
+            "q",
+            "*:*",
+            "stats",
+            "true",
+            "stats.field",
+            "{!cardinality=true}" + alphaNumericFieldName),
+        "//lst[@name='" + alphaNumericFieldName + "']/long[@name='cardinality'][.='0']");
   }
 
   // SOLR-3160
@@ -1005,14 +1051,22 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
         "//lst[@name='active_dt']/long[@name='cardinality'][.='0']");
   }
 
-  public void testStatsFacetMultivaluedErrorHandling() {
-    SolrCore core = h.getCore();
-    SchemaField foo_ss = core.getLatestSchema().getField("foo_ss");
+  public void testStatsFacetMultivaluedErrorHandlingString() {
+    doTestStatsFacetMultivaluedErrorHandling("foo_ss");
+  }
 
-    assertU(adoc("id", "1", "active_i", "1", "foo_ss", "aa"));
+  public void testStatsFacetMultivaluedErrorHandlingSortableText() {
+    doTestStatsFacetMultivaluedErrorHandling("val_stxt_s_dv");
+  }
+
+  private void doTestStatsFacetMultivaluedErrorHandling(String alphaNumericField) {
+    SolrCore core = h.getCore();
+    SchemaField foo_ss = core.getLatestSchema().getField(alphaNumericField);
+
+    assertU(adoc("id", "1", "active_i", "1", alphaNumericField, "aa"));
     assertU(commit());
-    assertU(adoc("id", "2", "active_i", "1", "foo_ss", "bb"));
-    assertU(adoc("id", "3", "active_i", "5", "foo_ss", "aa"));
+    assertU(adoc("id", "2", "active_i", "1", alphaNumericField, "bb"));
+    assertU(adoc("id", "3", "active_i", "5", alphaNumericField, "aa"));
     assertU(commit());
 
     assertTrue(
@@ -1023,12 +1077,12 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
         foo_ss.getType().isMultiValued());
 
     assertQEx(
-        "no failure trying to get stats facet on foo_ss",
+        "no failure trying to get stats facet on " + alphaNumericField,
         req(
             "q", "*:*",
             "stats", "true",
             "stats.field", "active_i",
-            "stats.facet", "foo_ss"),
+            "stats.facet", alphaNumericField),
         400);
   }
 
@@ -1041,7 +1095,7 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
     assertU(adoc("id", "4"));
     assertU(commit());
 
-    Map<String, String> args = new HashMap<String, String>();
+    Map<String, String> args = new HashMap<>();
     args.put(CommonParams.Q, "*:*");
     args.put(StatsParams.STATS, "true");
     args.put(StatsParams.STATS_FIELD, "{!ex=id}id_i");
@@ -1054,7 +1108,7 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
         "//lst[@name='id_i']/double[@name='min'][.='1.0']",
         "//lst[@name='id_i']/double[@name='max'][.='4.0']");
 
-    args = new HashMap<String, String>();
+    args = new HashMap<>();
     args.put(CommonParams.Q, "*:*");
     args.put(StatsParams.STATS, "true");
     args.put(StatsParams.STATS_FIELD, "{!key=id2}id_i");
@@ -2006,6 +2060,7 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
     SchemaField field_d = core.getLatestSchema().getField("field_d");
     SchemaField field_dt = core.getLatestSchema().getField("field_dt");
     SchemaField field_s = core.getLatestSchema().getField("field_s");
+    SchemaField field_st = core.getLatestSchema().getField("val_stxt_s_dv");
     SchemaField field_i = core.getLatestSchema().getField("field_i");
     SchemaField field_f = core.getLatestSchema().getField("field_f");
     SchemaField field_severity = core.getLatestSchema().getField("severity");
@@ -2055,7 +2110,7 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
           params("cardinality", "1.0", "hllLog2m", "13", "hllRegwidth", "6"),
           params("cardinality", "0.0", "hllLog2m", "13", "hllRegwidth", "6", "hllPreHash", "false")
         };
-    for (SchemaField field : new SchemaField[] {field_l, field_d, field_dt, field_s}) {
+    for (SchemaField field : new SchemaField[] {field_l, field_d, field_dt, field_s, field_st}) {
       final String f = field.getName();
       for (SolrParams p : longDefaultParams) {
         HllOptions opts = HllOptions.parseHllOptions(p, field);
@@ -2131,10 +2186,11 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
     String[] baseParams = new String[] {"q", "*:*", "stats", "true", "indent", "true", "rows", "0"};
     SolrCore core = h.getCore();
     SchemaField foo_s = core.getLatestSchema().getField("foo_s");
+    SchemaField foo_st = core.getLatestSchema().getField("val_stxt_s_dv");
     SchemaField foo_i = core.getLatestSchema().getField("foo_i");
 
     ignoreException("hllPreHashed");
-    for (SchemaField field : new SchemaField[] {foo_s, foo_i}) {
+    for (SchemaField field : new SchemaField[] {foo_s, foo_i, foo_st}) {
       // whitebox - field
       SolrException ex =
           expectThrows(
@@ -2304,6 +2360,7 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
     // non-numeric types don't support percentiles
     assertU(adoc("id", ++id + "", "stat_dt", "1999-05-03T04:55:01Z"));
     assertU(adoc("id", ++id + "", "stat_s", "cow"));
+    assertU(adoc("id", ++id + "", "val_stxt_s_dv", "cow"));
 
     assertU(commit());
 
@@ -2316,10 +2373,13 @@ public class StatsComponentTest extends SolrTestCaseJ4 {
             "stats.field",
             "{!percentiles='" + percentiles + "'}stat_dt",
             "stats.field",
-            "{!percentiles='" + percentiles + "'}stat_s")) {
+            "{!percentiles='" + percentiles + "'}stat_s",
+            "stats.field",
+            "{!percentiles='" + percentiles + "'}val_stxt_s_dv")) {
       SolrQueryResponse rsp = h.queryAndResponse(null, query);
       assertNull(extractPercentiles(rsp, "stat_dt"));
       assertNull(extractPercentiles(rsp, "stat_s"));
+      assertNull(extractPercentiles(rsp, "val_stxt_s_dv"));
     }
   }
 

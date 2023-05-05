@@ -42,6 +42,7 @@ import org.apache.solr.schema.DatePointField;
 import org.apache.solr.schema.FieldType;
 import org.apache.solr.schema.PointField;
 import org.apache.solr.schema.SchemaField;
+import org.apache.solr.schema.SortableTextField;
 import org.apache.solr.schema.StrField;
 import org.apache.solr.schema.TrieDateField;
 import org.apache.solr.schema.TrieField;
@@ -83,11 +84,19 @@ public class StatsValuesFactory {
         return new SortedNumericStatsValues(statsValue, statsField);
       }
       return statsValue;
-    } else if (StrField.class.isInstance(fieldType)) {
+    } else if (StrField.class.isInstance(fieldType)
+        || (SortableTextField.class.isInstance(fieldType) && sf.hasDocValues())) {
       return new StringStatsValues(statsField);
     } else if (AbstractEnumField.class.isInstance(fieldType)) {
       return new EnumStatsValues(statsField);
     } else {
+      if (SortableTextField.class.isInstance(fieldType) && !sf.hasDocValues()) {
+        throw new SolrException(
+            SolrException.ErrorCode.BAD_REQUEST,
+            "Field types for class "
+                + SortableTextField.class
+                + " are only supported with docValues enabled");
+      }
       throw new SolrException(
           SolrException.ErrorCode.BAD_REQUEST,
           "Field type " + fieldType + " is not currently supported");
